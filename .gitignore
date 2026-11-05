@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+# Evidencia y resultados del estudiante: nunca al repositorio
+data/
+.env
