@@ -10,7 +10,8 @@ from pathlib import Path
 
 from scrapcv.application.analysis import ExtractionService, ProfileService, StageSummary
 from scrapcv.application.cv_revision import CvReviser, RevisionRejected
-from scrapcv.application.cv_service import CvResult, CvService
+from scrapcv.application.cv_service import EVIDENCE_KEY, CvResult, CvService
+from scrapcv.writing.resume import TEMPLATES, ResumeTemplate
 from scrapcv.application.ingest import IngestService, IngestSummary
 from scrapcv.domain.facts import Facts, ProjectProfile
 from scrapcv.domain.models import IndexEntry
@@ -79,8 +80,12 @@ class ScrapCvFacade:
     def ranking(self, role: JobRole, criteria: SelectionCriteria) -> list[RankedProject]:
         return self._cv.ranking(role, criteria)
 
-    def generate_cv(self, role: JobRole, criteria: SelectionCriteria) -> CvResult:
-        return self._cv.generate(role, criteria)
+    def generate_cv(self, role: JobRole, criteria: SelectionCriteria, template_key: str = EVIDENCE_KEY) -> CvResult:
+        return self._cv.generate(role, criteria, template_key)
+
+    @staticmethod
+    def resume_templates() -> tuple[ResumeTemplate, ...]:
+        return TEMPLATES
 
     @property
     def can_revise(self) -> bool:
@@ -91,11 +96,11 @@ class ScrapCvFacade:
             raise RevisionRejected("Activa un modelo de Ollama en Configuración para pedir cambios al CV.")
         return self._reviser.revise(markdown, instruction)
 
-    def save_cv(self, role: JobRole, markdown: str) -> Path:
-        return self._cv.save_edit(role, markdown)
+    def save_cv(self, role: JobRole, markdown: str, template_key: str = EVIDENCE_KEY) -> Path:
+        return self._cv.save_edit(role, markdown, template_key)
 
-    def approve_cv(self, role: JobRole, markdown: str) -> Path:
-        return self._cv.approve(role, markdown)
+    def approve_cv(self, role: JobRole, markdown: str, template_key: str = EVIDENCE_KEY) -> Path:
+        return self._cv.approve(role, markdown, template_key)
 
     # --- Consultas para la interfaz ---------------------------------------------------
     def entries(self) -> list[IndexEntry]:

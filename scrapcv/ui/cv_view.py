@@ -5,13 +5,14 @@ import os
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from scrapcv.application.cv_service import CvResult
+from scrapcv.application.cv_service import EVIDENCE_KEY, CvResult
 from scrapcv.ranking.ranker import SelectionCriteria
 from scrapcv.ranking.roles import JobRole
 from scrapcv.ui.controller import AppController
 from scrapcv.ui.widgets import MONO, TaskStarter, scrolled_text, scrolled_tree, set_text
 
 CUSTOM = "Personalizado…"
+EVIDENCE_LABEL = "Borrador con evidencia (formato original)"
 
 
 class CvView(ttk.Frame):
@@ -22,7 +23,10 @@ class CvView(ttk.Frame):
         self._role: JobRole | None = None
         self.role_name = tk.StringVar()
         self.keywords = tk.StringVar()
-        self.max_projects = tk.IntVar(value=4)
+        self.max_projects = tk.IntVar(value=3)
+        self.template_name = tk.StringVar()
+        self.template_hint = tk.StringVar()
+        self._template_key = ""  # plantilla del borrador que se está editando
         self.status = tk.StringVar(value="Genera un borrador para el puesto que te interesa.")
         self._build()
 
@@ -32,6 +36,12 @@ class CvView(ttk.Frame):
 
         side = ttk.Frame(self)
         side.grid(row=0, column=0, sticky="ns", padx=(0, 16))
+        ttk.Label(side, text="Tipo de currículum").pack(anchor="w")
+        self._template_box = ttk.Combobox(side, textvariable=self.template_name, width=38, state="readonly")
+        self._template_box.pack(anchor="w", fill="x", pady=(2, 0))
+        self._template_box.bind("<<ComboboxSelected>>", lambda _e: self._template_changed())
+        ttk.Label(side, textvariable=self.template_hint, style="Muted.TLabel", wraplength=280, justify="left").pack(
+            anchor="w", pady=(2, 8))
         ttk.Label(side, text="Puesto objetivo").pack(anchor="w")
         self._roles = ttk.Combobox(side, textvariable=self.role_name, width=38)
         self._roles.pack(anchor="w", fill="x", pady=(2, 8))
@@ -87,8 +97,25 @@ class CvView(ttk.Frame):
         ttk.Label(actions, textvariable=self.status, style="Muted.TLabel").pack(side="left", padx=12)
 
     # --- Datos ---------------------------------------------------------------------------
+    def _template_options(self) -> dict[str, tuple[str, str, int | None]]:
+        """nombre visible → (clave, descripción, proyectos sugeridos)."""
+        options = {t.name: (t.key, t.description, t.default_projects) for t in self._controller.app.resume_templates()}
+        options[EVIDENCE_LABEL] = (EVIDENCE_KEY, "Lista cada proyecto con la evidencia que respalda cada viñeta. Útil para revisar.", None)
+        return options
+
+    def _template_changed(self) -> None:
+        key, hint, projects = self._template_options()[self.template_name.get()]
+        self.template_hint.set(hint)
+        if projects:
+            self.max_projects.set(projects)
+
     def refresh(self) -> None:
         app = self._controller.app
+        options = self._template_options()
+        self._template_box.configure(values=list(options))
+        if self.template_name.get() not in options:
+            self.template_name.set(next(iter(options)))
+            self._template_changed()
         names = app.roles.names() + [CUSTOM]
         self._roles.configure(values=names)
         if not self.role_name.get():
@@ -127,8 +154,10 @@ class CvView(ttk.Frame):
         courses = self._selected_courses()
         criteria = SelectionCriteria(include_courses=frozenset(courses), max_projects=limit)
         self._role = role
-        self.status.set("Generando…")
-        self._start("CV", lambda _p: self._controller.app.generate_cv(role, criteria), self._show_result)
+        key = self._template_options()[self.template_name.get()][0]
+        self._template_key = key
+        self.status.set("Generando… (con Ollama puede tardar unos minutos)")
+        self._start("CV", lambda _p: self._controller.app.generate_cv(role, criteria, key), self._show_result)
 
     def _show_result(self, result: CvResult) -> None:
         set_text(self._editor, result.markdown, readonly=False)
@@ -167,7 +196,7 @@ class CvView(ttk.Frame):
 
     def _save(self) -> None:
         if self._role and self._markdown().strip():
-            path = self._controller.app.save_cv(self._role, self._markdown())
+            path = self._controller.app.save_cv(self._role, self._markdown(), self._template_key)
             self.status.set(f"Cambios guardados en {path.name}.")
 
     def _approve(self) -> None:
@@ -177,7 +206,7 @@ class CvView(ttk.Frame):
             "ScrapCV", "El borrador todavía tiene puntos marcados como «Verificar». ¿Aprobarlo de todos modos?"
         ):
             return
-        path = self._controller.app.approve_cv(self._role, self._markdown())
+        path = self._controller.app.approve_cv(self._role, self._markdown(), self._template_key)
         self.status.set(f"✔ CV final guardado en {path.name}.")
 
     def _open_folder(self) -> None:

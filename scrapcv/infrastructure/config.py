@@ -25,6 +25,11 @@ class Settings:
     ollama_model: str = ""
     use_llm: bool = True
     excluded_courses: list[str] = field(default_factory=list)
+    phone: str = ""
+    location: str = ""
+    linkedin: str = ""
+    github: str = ""
+    portfolio: str = ""
 
 
 class SettingsStore:

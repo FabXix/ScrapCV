@@ -13,6 +13,11 @@ from scrapcv.domain.facts import ProjectProfile
 _NUMBER = re.compile(r"(?<![\w.])\d+(?:[.,]\d+)?\s*(?:%|por ciento|k\b|mil\b)?")
 
 
+def strip_numbers(text: str) -> str:
+    """Quita cifras de un texto escrito por el modelo (las cifras salen solo de `Facts`)."""
+    return re.sub(r"\s{2,}", " ", _NUMBER.sub("", text)).strip(" ,;")
+
+
 class ProfileGuard(ABC):
     @abstractmethod
     def apply(self, profile: ProjectProfile, evidence: str) -> None: ...

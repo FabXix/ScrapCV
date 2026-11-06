@@ -28,6 +28,11 @@ class SettingsView(ttk.Frame):
         self.use_llm = tk.BooleanVar(value=s.use_llm)
         self.ollama_url = tk.StringVar(value=s.ollama_url)
         self.model = tk.StringVar(value=s.ollama_model)
+        self.phone = tk.StringVar(value=s.phone)
+        self.location = tk.StringVar(value=s.location)
+        self.linkedin = tk.StringVar(value=s.linkedin)
+        self.github = tk.StringVar(value=s.github)
+        self.portfolio = tk.StringVar(value=s.portfolio)
         self.status = tk.StringVar(value="Configura la fuente de datos y presiona «Aplicar».")
         self._models_found: "queue.Queue[list[str]]" = queue.Queue()
         self._build()
@@ -79,8 +84,22 @@ class SettingsView(ttk.Frame):
         ttk.Label(llm, text="Solo se acepta un servidor en esta computadora; ningún trabajo se envía a la nube.",
                   style="Muted.TLabel").grid(row=3, column=0, columnspan=3, sticky="w", pady=(6, 0))
 
+        contact = ttk.LabelFrame(self, text="Datos del currículum (encabezado)", style="Section.TLabelframe", padding=12)
+        contact.grid(row=3, column=0, sticky="ew", pady=(12, 0))
+        contact.columnconfigure(1, weight=1)
+        contact.columnconfigure(3, weight=1)
+        for i, (label, var) in enumerate((
+            ("Teléfono", self.phone), ("Ciudad", self.location),
+            ("LinkedIn", self.linkedin), ("GitHub", self.github), ("Portafolio", self.portfolio),
+        )):
+            row, col = divmod(i, 2)
+            ttk.Label(contact, text=label).grid(row=row, column=col * 2, sticky="w", padx=(0 if col == 0 else 16, 8))
+            ttk.Entry(contact, textvariable=var).grid(row=row, column=col * 2 + 1, sticky="ew", pady=2)
+        ttk.Label(contact, text="Se guardan solo en tu computadora y se usan en el encabezado del currículum.",
+                  style="Muted.TLabel").grid(row=3, column=0, columnspan=4, sticky="w", pady=(6, 0))
+
         actions = ttk.Frame(self)
-        actions.grid(row=3, column=0, sticky="ew", pady=(16, 0))
+        actions.grid(row=4, column=0, sticky="ew", pady=(16, 0))
         ttk.Button(actions, text="Aplicar y probar conexión", style="Accent.TButton", command=self._apply).pack(side="left")
         ttk.Label(actions, textvariable=self.status, style="Muted.TLabel").pack(side="left", padx=12)
 
@@ -103,6 +122,11 @@ class SettingsView(ttk.Frame):
             ollama_url=self.ollama_url.get().strip(),
             ollama_model=self.model.get().strip(),
             use_llm=self.use_llm.get(),
+            phone=self.phone.get().strip(),
+            location=self.location.get().strip(),
+            linkedin=self.linkedin.get().strip(),
+            github=self.github.get().strip(),
+            portfolio=self.portfolio.get().strip(),
         )
 
     def _refresh_models(self) -> None:

@@ -178,3 +178,14 @@ class UserInfo:
     id: int
     name: str
     email: str = ""
+
+
+@dataclass(frozen=True)
+class ContactInfo:
+    """Datos de contacto que Canvas no tiene; el usuario los captura en Configuración."""
+
+    phone: str = ""
+    location: str = ""
+    linkedin: str = ""
+    github: str = ""
+    portfolio: str = ""

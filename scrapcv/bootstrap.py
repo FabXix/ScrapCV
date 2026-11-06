@@ -33,7 +33,9 @@ from scrapcv.infrastructure.storage import (
 from scrapcv.ports import ProjectProfiler
 from scrapcv.ranking.ranker import WeightedRanker
 from scrapcv.ranking.roles import RoleCatalog
+from scrapcv.domain.models import ContactInfo
 from scrapcv.writing.cv import CvComposer, MarkdownCvRenderer
+from scrapcv.writing.resume import ResumeBuilder, ResumeWriter
 
 
 class MissingTokenError(ValueError):
@@ -63,6 +65,12 @@ def _reviser(settings: Settings) -> CvReviser | None:
     return CvReviser(OllamaLanguageModel(settings.ollama_url, settings.ollama_model))
 
 
+def _resume_model(settings: Settings) -> OllamaLanguageModel | None:
+    if not settings.use_llm or not settings.ollama_model:
+        return None
+    return OllamaLanguageModel(settings.ollama_url, settings.ollama_model)
+
+
 def build_app(settings: Settings, token: str | None) -> ScrapCvFacade:
     layout = DataLayout(Path(settings.data_dir))
     configure_logging(layout.logs)
@@ -79,7 +87,11 @@ def build_app(settings: Settings, token: str | None) -> ScrapCvFacade:
         ingest=IngestService(gateway, gateway, raw, index, users),
         extraction=ExtractionService(StaticAnalyzer(default_registry()), raw, store, index),
         profiles=ProfileService(profiler, store, index),
-        cv=CvService(index, store, users, WeightedRanker(), CvComposer(), MarkdownCvRenderer(), FileCvRepository(layout)),
+        cv=CvService(
+            index, store, users, WeightedRanker(), CvComposer(), MarkdownCvRenderer(), FileCvRepository(layout),
+            resume=ResumeBuilder(ResumeWriter(_resume_model(settings))),
+            contact=ContactInfo(settings.phone, settings.location, settings.linkedin, settings.github, settings.portfolio),
+        ),
         index=index,
         store=store,
         roles=RoleCatalog(),
