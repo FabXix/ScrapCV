@@ -11,11 +11,12 @@ from pathlib import Path
 from scrapcv.application.analysis import ExtractionService, ProfileService, StageSummary
 from scrapcv.application.cv_revision import CvReviser, RevisionRejected
 from scrapcv.application.cv_service import EVIDENCE_KEY, CvResult, CvService
-from scrapcv.writing.resume import TEMPLATES, ResumeTemplate
 from scrapcv.application.ingest import IngestService, IngestSummary
 from scrapcv.domain.facts import Facts, ProjectProfile
 from scrapcv.domain.models import IndexEntry
-from scrapcv.ports import AnalysisStore, CanvasReader, IndexRepository, NullProgress, ProgressListener
+from scrapcv.domain.posting import JobPosting
+from scrapcv.ports import AnalysisStore, CanvasReader, IndexRepository, NullProgress, PostingAnalyzer, ProgressListener
+from scrapcv.writing.templates import TEMPLATES, ResumeTemplate
 from scrapcv.ranking.ranker import RankedProject, SelectionCriteria
 from scrapcv.ranking.roles import JobRole, RoleCatalog
 
@@ -40,8 +41,10 @@ class ScrapCvFacade:
         roles: RoleCatalog,
         data_dir: Path,
         profiler_name: str,
+        posting_analyzer: PostingAnalyzer | None = None,
         reviser: CvReviser | None = None,
     ) -> None:
+        self._posting_analyzer = posting_analyzer
         self._reviser = reviser
         self._reader = reader
         self._ingest = ingest
@@ -68,11 +71,11 @@ class ScrapCvFacade:
         return self._profiles.run(progress)
 
     def run_all(self, progress: ProgressListener = NullProgress()) -> PipelineSummary:
-        progress.info("== Etapa 1: ingesta ==")
+        progress.info("Paso 1 de 3: descargando tus entregas de Canvas…")
         ingest = self.ingest(progress)
-        progress.info("== Etapa 2: extracción estática ==")
+        progress.info("Paso 2 de 3: leyendo archivos, código y documentos…")
         extraction = self.extract(progress)
-        progress.info(f"== Etapa 3: perfiles ({self.profiler_name}) ==")
+        progress.info(f"Paso 3 de 3: resumiendo cada proyecto ({self.profiler_name})…")
         profiles = self.build_profiles(progress)
         return PipelineSummary(ingest, extraction, profiles)
 
@@ -80,8 +83,36 @@ class ScrapCvFacade:
     def ranking(self, role: JobRole, criteria: SelectionCriteria) -> list[RankedProject]:
         return self._cv.ranking(role, criteria)
 
-    def generate_cv(self, role: JobRole, criteria: SelectionCriteria, template_key: str = EVIDENCE_KEY) -> CvResult:
-        return self._cv.generate(role, criteria, template_key)
+    def generate_cv(self, role: JobRole, criteria: SelectionCriteria, template_key: str = EVIDENCE_KEY,
+                    progress: ProgressListener = NullProgress()) -> CvResult:
+        return self._cv.generate(role, criteria, template_key, progress)
+
+    # --- Vacante (CV a la medida) -------------------------------------------------------
+    def analyze_posting(self, text: str) -> JobPosting:
+        if not text.strip():
+            raise ValueError("Pega el texto de la vacante.")
+        if self._posting_analyzer is None:
+            from scrapcv.analysis.posting import KeywordPostingAnalyzer
+
+            self._posting_analyzer = KeywordPostingAnalyzer()
+        return self._posting_analyzer.analyze(text)
+
+    def generate_for_posting(self, text: str, criteria: SelectionCriteria, template_key: str,
+                             progress: ProgressListener = NullProgress()) -> CvResult:
+        """Flujo de Resume Optimizer: vacante → requisitos → proyectos con evidencia → CV + análisis."""
+        progress.info("Leyendo la vacante…")
+        posting = self.analyze_posting(text)
+        return self._cv.generate(JobRole.from_posting(posting), criteria, template_key, progress)
+
+    def readiness(self) -> tuple[int, int]:
+        """(entregas descargadas, entregas que pueden ir al CV)."""
+        return len(self._index.all()), self._cv.eligible_count()
+
+    def export_formats(self) -> list[tuple[str, str]]:
+        return self._cv.export_formats()
+
+    def export_cv(self, role: JobRole, markdown: str, template_key: str, fmt: str) -> Path:
+        return self._cv.export(role, markdown, template_key, fmt)
 
     @staticmethod
     def resume_templates() -> tuple[ResumeTemplate, ...]:

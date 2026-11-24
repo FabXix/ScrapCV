@@ -5,13 +5,14 @@ la interfaz puede probarse con una fachada falsa (DIP).
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Callable
 
 from scrapcv.application.facade import ScrapCvFacade
 from scrapcv.infrastructure.config import (
     ChainedTokenProvider,
     EnvTokenProvider,
-    FileTokenProvider,
+    StoredTokenProvider,
     Settings,
     SettingsStore,
     StaticTokenProvider,
@@ -31,8 +32,12 @@ class AppController:
         self._app: ScrapCvFacade | None = None
 
     # --- Configuración -------------------------------------------------------------
+    @property
+    def can_remember_token(self) -> bool:
+        return self._store.can_remember_token
+
     def has_saved_token(self) -> bool:
-        return bool(FileTokenProvider(self._store).get_token() or EnvTokenProvider().get_token())
+        return bool(StoredTokenProvider(self._store).get_token() or EnvTokenProvider().get_token())
 
     def apply(self, settings: Settings, typed_token: str | None, remember_token: bool) -> ScrapCvFacade:
         self.settings = settings
@@ -41,10 +46,15 @@ class AppController:
             self._store.save_token(self._typed_token)
         self._store.save(settings)
         token = ChainedTokenProvider(
-            StaticTokenProvider(self._typed_token), EnvTokenProvider(), FileTokenProvider(self._store)
+            StaticTokenProvider(self._typed_token), EnvTokenProvider(), StoredTokenProvider(self._store)
         ).get_token()
         self._app = self._factory(settings, token)
         return self._app
+
+    def remember_cv_inputs(self, posting: str, template_key: str) -> None:
+        """La vacante y el formato se recuerdan para la próxima vez que abras la app."""
+        self.settings = replace(self.settings, last_posting=posting[:20_000], template_key=template_key)
+        self._store.save(self.settings)
 
     def available_models(self, settings: Settings) -> list[str]:
         return self._list_models(settings)

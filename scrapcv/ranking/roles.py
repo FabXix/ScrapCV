@@ -3,17 +3,40 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from scrapcv.domain.posting import JobPosting
+from scrapcv.domain.skills import canonical, normalize
 from scrapcv.domain.text import slugify, tokenize
+
+
+PHRASE = "~"  # marca de un requisito en lenguaje natural: se compara por palabras, no exacto
 
 
 @dataclass(frozen=True)
 class JobRole:
     name: str
     keywords: frozenset[str]
+    # Cada requisito con sus formas equivalentes ({"node.js", "node", "nodejs"}).
+    # Vacío = cada palabra clave es un requisito por separado.
+    requirements: tuple[frozenset[str], ...] = ()
+    posting: JobPosting | None = None
 
     @property
     def slug(self) -> str:
         return slugify(self.name, max_len=40)
+
+    def requirement_groups(self) -> tuple[frozenset[str], ...]:
+        return self.requirements or tuple(frozenset({k}) for k in sorted(self.keywords))
+
+    @classmethod
+    def from_posting(cls, posting: JobPosting) -> "JobRole":
+        groups = []
+        for requirement in posting.technical:
+            skill = canonical(requirement)
+            groups.append(frozenset(skill.forms) if skill else frozenset({PHRASE + normalize(requirement)}))
+        if not groups and posting.title:
+            groups.append(frozenset({PHRASE + normalize(posting.title)}))  # vacante sin requisitos: al menos el puesto
+        keywords = frozenset(form for group in groups for form in group)
+        return cls(posting.title or "Vacante", keywords, tuple(groups), posting)
 
     @classmethod
     def custom(cls, name: str, keywords_text: str) -> "JobRole":

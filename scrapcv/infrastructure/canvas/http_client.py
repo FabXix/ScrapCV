@@ -25,6 +25,10 @@ class CanvasHttpError(Exception):
     pass
 
 
+class InsecureCanvasUrl(ValueError):
+    """La URL de Canvas no usa https: el token viajaría sin cifrar."""
+
+
 class CanvasHttpClient:
     def __init__(
         self,
@@ -36,7 +40,11 @@ class CanvasHttpClient:
         sleep: Callable[[float], None] = time.sleep,
         timeout: float = 60.0,
     ) -> None:
-        self._base = base_url.rstrip("/")
+        parsed = urlparse(base_url.strip())
+        if parsed.scheme != "https" or not parsed.hostname:
+            raise InsecureCanvasUrl("La URL de Canvas debe empezar con https:// para no exponer el token.")
+        self._base = base_url.strip().rstrip("/")
+        self._host = parsed.netloc.lower()
         self._token = token
         self._session = session or requests.Session()
         self._max_retries = max_retries
@@ -56,6 +64,9 @@ class CanvasHttpClient:
             payload = response.json()
             yield from payload if isinstance(payload, list) else [payload]
             url = response.links.get("next", {}).get("url")
+            if url and not self._is_canvas_host(url):
+                # Una cabecera Link manipulada no debe llevarse el token a otro servidor.
+                raise CanvasHttpError("Canvas devolvió un enlace de paginación a otro servidor; se detuvo la descarga.")
             query = None  # la URL "next" ya trae los parámetros
 
     def download(self, url: str, destination: Path) -> None:
@@ -72,9 +83,13 @@ class CanvasHttpClient:
         return path if path.startswith("http") else f"{self._base}/api/v1/{path.lstrip('/')}"
 
     def _is_canvas_host(self, url: str) -> bool:
-        return urlparse(url).netloc == urlparse(self._base).netloc
+        """Mismo servidor y https: solo entonces se puede mandar el token."""
+        parsed = urlparse(url)
+        return parsed.scheme == "https" and parsed.netloc.lower() == self._host
 
     def _request(self, url: str, params, stream: bool = False, authenticate: bool = True) -> requests.Response:
+        if authenticate and not self._is_canvas_host(url):
+            raise CanvasHttpError("Se intentó enviar el token a un servidor que no es Canvas; solicitud cancelada.")
         headers = {"Authorization": f"Bearer {self._token}"} if authenticate else {}
         for attempt in range(self._max_retries + 1):
             try:

@@ -189,3 +189,6 @@ class ContactInfo:
     linkedin: str = ""
     github: str = ""
     portfolio: str = ""
+    degree: str = ""  # carrera
+    institution: str = ""
+    period: str = ""  # p. ej. «2022 – 2026 (esperado)»

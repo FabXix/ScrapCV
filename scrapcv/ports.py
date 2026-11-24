@@ -13,6 +13,7 @@ from typing import Iterable
 
 from scrapcv.domain.facts import Facts, ProjectProfile, TextSnippet
 from scrapcv.domain.models import Course, IndexEntry, Submission, UserInfo
+from scrapcv.domain.posting import JobPosting
 
 
 # --- Configuración ---------------------------------------------------------
@@ -140,6 +141,23 @@ class CvRepository(ABC):
     @abstractmethod
     def load_draft(self, role_slug: str) -> str | None: ...
 
+    @abstractmethod
+    def save_evidence(self, role_slug: str, evidence: list[dict]) -> Path: ...
+
+    @abstractmethod
+    def save_export(self, role_slug: str, extension: str, data: bytes) -> Path: ...
+
+
+class CvExporter(ABC):
+    """Convierte el CV (Markdown) a un formato para enviar. Un formato nuevo = una clase nueva."""
+
+    key: str = ""
+    label: str = ""
+    extension: str = ""
+
+    @abstractmethod
+    def export(self, markdown: str) -> bytes: ...
+
 
 # --- Modelo de lenguaje -----------------------------------------------------
 class LanguageModel(ABC):
@@ -161,3 +179,31 @@ class ProjectProfiler(ABC):
 
     @abstractmethod
     def profile(self, entry: IndexEntry, facts: Facts, snippets: Iterable[TextSnippet]) -> ProjectProfile: ...
+
+
+class PostingAnalyzer(ABC):
+    """Estrategia para leer una vacante y separar sus requisitos."""
+
+    @property
+    @abstractmethod
+    def name(self) -> str: ...
+
+    @abstractmethod
+    def analyze(self, text: str) -> JobPosting: ...
+
+
+class SecretStore(ABC):
+    """Dónde se guarda el token entre sesiones (llavero del sistema, no un archivo de texto)."""
+
+    @property
+    @abstractmethod
+    def available(self) -> bool: ...
+
+    @abstractmethod
+    def get(self) -> str | None: ...
+
+    @abstractmethod
+    def set(self, value: str) -> None: ...
+
+    @abstractmethod
+    def delete(self) -> None: ...

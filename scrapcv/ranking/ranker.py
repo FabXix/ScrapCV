@@ -12,8 +12,10 @@ from dataclasses import dataclass, field
 
 from scrapcv.domain.facts import Facts, ProjectProfile
 from scrapcv.domain.models import IndexEntry
-from scrapcv.domain.text import tokenize
-from scrapcv.ranking.roles import JobRole
+from scrapcv.domain.skills import Skill, canonical, normalize, with_implied
+from scrapcv.domain.text import phrase_matches, tokenize
+from scrapcv.ranking.eligibility import DEFAULT_FILTERS, CandidateFilter
+from scrapcv.ranking.roles import PHRASE, JobRole
 
 
 @dataclass(frozen=True)
@@ -26,13 +28,29 @@ class ProjectCandidate:
         parts = [self.entry.assignment_name, self.entry.course_name, *self.facts.languages, *self.facts.dependencies]
         parts += [doc.kind for doc in self.facts.documents]
         if self.profile:
-            parts += [self.profile.summary, self.profile.scope, *self.profile.technologies, *self.profile.skills]
+            parts += [self.profile.summary, self.profile.scope, self.profile.role, *self.profile.technologies,
+                      *self.profile.skills]
         text = " ".join(parts).lower()
         return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
 
     def tokens(self) -> set[str]:
         # Los lenguajes de una letra (C, R) no sobreviven a tokenize(); se agregan aparte.
-        return tokenize(self.corpus()) | {lang.lower() for lang in self.facts.languages}
+        names = {normalize(skill.name) for skill in self.skills()}
+        return tokenize(self.corpus()) | {lang.lower() for lang in self.facts.languages} | names
+
+    def skills(self) -> list[Skill]:
+        """Tecnologías del catálogo con evidencia en esta entrega (lenguajes, dependencias y perfil)."""
+        names = [*self.facts.languages, *self.facts.dependencies]
+        if self.profile:
+            names += [*self.profile.technologies, *self.profile.skills]
+        if any(link.kind == "repositorio" for link in self.facts.links) or self.facts.has_git_history:
+            names.append("Git")
+        found = (canonical(name) for name in names)
+        return with_implied(list(dict.fromkeys(skill for skill in found if skill)))
+
+    def repository(self) -> str | None:
+        url = next((link.url for link in self.facts.links if link.kind == "repositorio"), None)
+        return url.lower().rstrip("/").removesuffix(".git") if url else None
 
 
 @dataclass(frozen=True)
@@ -59,12 +77,15 @@ class RoleAffinityScorer(ProjectScorer):
     def score(self, candidate: ProjectCandidate, role: JobRole) -> ScoreDetail:
         corpus = candidate.corpus()
         tokens = candidate.tokens()
-        matched = sorted(k for k in role.keywords if self._matches(k, corpus, tokens))
-        value = min(1.0, len(matched) / max(1, min(self._saturation, len(role.keywords))))
+        groups = role.requirement_groups()
+        matched = sorted(min(g).lstrip(PHRASE) for g in groups if any(self._matches(k, corpus, tokens) for k in g))
+        value = min(1.0, len(matched) / max(1, min(self._saturation, len(groups))))
         return ScoreDetail(value, ", ".join(matched[:8]))
 
     @staticmethod
     def _matches(keyword: str, corpus: str, tokens: set[str]) -> bool:
+        if keyword.startswith(PHRASE):
+            return phrase_matches(keyword[len(PHRASE):], corpus)
         normalized = unicodedata.normalize("NFKD", keyword).encode("ascii", "ignore").decode().lower()
         return normalized in corpus if " " in normalized else normalized in tokens
 
@@ -122,6 +143,10 @@ class WeightedRanker:
     scorers: list[tuple[ProjectScorer, float]] = field(default_factory=lambda: [
         (RoleAffinityScorer(), 0.6), (SizeScorer(), 0.2), (GradeScorer(), 0.2),
     ])
+    filters: tuple[CandidateFilter, ...] = DEFAULT_FILTERS
+
+    def eligible(self, candidate: ProjectCandidate) -> bool:
+        return not any(f.rejects(candidate) for f in self.filters)
 
     def rank(self, candidates: list[ProjectCandidate], role: JobRole) -> list[RankedProject]:
         total_weight = sum(weight for _, weight in self.scorers) or 1.0
@@ -133,6 +158,20 @@ class WeightedRanker:
         return sorted(ranked, key=lambda r: (-r.total, r.candidate.entry.key))
 
     def select(self, candidates: list[ProjectCandidate], role: JobRole, criteria: SelectionCriteria) -> list[RankedProject]:
-        admitted = [c for c in candidates if criteria.admits(c)]
+        admitted = [c for c in candidates if criteria.admits(c) and self.eligible(c)]
         ranked = [r for r in self.rank(admitted, role) if r.affinity >= criteria.min_affinity]
-        return ranked[: max(0, criteria.max_projects)]
+        return self._one_per_repository(ranked)[: max(0, criteria.max_projects)]
+
+    @staticmethod
+    def _one_per_repository(ranked: list[RankedProject]) -> list[RankedProject]:
+        """Varias entregas del mismo repositorio son un solo proyecto: se queda la mejor puntuada."""
+        seen: set[str] = set()
+        out = []
+        for r in ranked:
+            repo = r.candidate.repository()
+            if repo and repo in seen:
+                continue
+            if repo:
+                seen.add(repo)
+            out.append(r)
+        return out

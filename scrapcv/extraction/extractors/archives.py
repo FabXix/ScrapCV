@@ -142,9 +142,52 @@ class SevenZipExtractor(_ArchiveExtractor):
         listing = subprocess.run([self._exe, "l", "-slt", str(path)], capture_output=True, text=True, timeout=120)
         if listing.returncode != 0:
             raise ExtractionError("archivo .rar/.7z dañado")
-        names = [line[7:] for line in listing.stdout.splitlines() if line.startswith("Path = ")][1:]
-        for name in names:
-            safe_member_path(destination, name)  # valida antes de extraer
+        members = self._members(listing.stdout)
+        for member in members:
+            safe_member_path(destination, member.path)  # valida rutas antes de extraer
+            if member.is_link:
+                raise UnsafeArchive(f"enlace simbólico dentro del archivo: {member.path}")
+        files = [m for m in members if not m.is_dir]
+        # Mismos límites que .zip y .tar, con los tamaños que declara el archivo…
+        self._check_totals(len(files), sum(m.size for m in files), max(1, path.stat().st_size))
         run = subprocess.run([self._exe, "x", "-y", f"-o{destination}", str(path)], capture_output=True, timeout=600)
         if run.returncode != 0:
             raise ExtractionError("no se pudo descomprimir con 7z")
+        # …y con lo que realmente quedó en disco, por si las cabeceras mentían.
+        written = [p for p in destination.rglob("*") if p.is_file()]
+        try:
+            self._check_totals(len(written), sum(p.stat().st_size for p in written), max(1, path.stat().st_size))
+        except UnsafeArchive:
+            shutil.rmtree(destination, ignore_errors=True)
+            raise
+
+    @staticmethod
+    def _members(listing: str) -> list["_SevenZipMember"]:
+        """Lee la salida de `7z l -slt`: un bloque «Clave = valor» por miembro, después de «----------»."""
+        _, _, body = listing.partition("\n----------")
+        members = []
+        for block in body.strip().split("\n\n"):
+            fields = dict(line.split(" = ", 1) for line in block.splitlines() if " = " in line)
+            if "Path" not in fields:
+                continue
+            attributes = fields.get("Attributes", "")
+            unix_mode = attributes.split()[-1] if attributes.split() else ""  # «A_ lrwxrwxrwx» = enlace
+            try:
+                size = int(fields.get("Size") or 0)
+            except ValueError:
+                size = 0
+            members.append(_SevenZipMember(
+                path=fields["Path"],
+                size=size,
+                is_dir=fields.get("Folder") == "+" or attributes.startswith("D"),
+                is_link=len(unix_mode) == 10 and unix_mode.startswith("l"),
+            ))
+        return members
+
+
+@dataclass(frozen=True)
+class _SevenZipMember:
+    path: str
+    size: int
+    is_dir: bool
+    is_link: bool

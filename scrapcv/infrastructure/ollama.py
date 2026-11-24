@@ -62,16 +62,23 @@ class OllamaLanguageModel(LanguageModel):
             "model": self._model,
             "stream": False,
             "format": "json",
-            "options": {"temperature": 0.1},
+            # num_ctx: el valor por defecto de Ollama (2048) trunca CVs completos; num_predict=-1 evita cortar la respuesta.
+            "options": {"temperature": 0.1, "num_ctx": 16384, "num_predict": -1},
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}],
         }
         try:
             response = self._session.post(f"{self._base}/api/chat", json=payload, timeout=self._timeout)
             response.raise_for_status()
-            content = response.json()["message"]["content"]
-            data = json.loads(content)
+            body = response.json()
+            content = body["message"]["content"]
         except (requests.RequestException, ValueError, KeyError) as exc:
             raise LanguageModelError(f"Ollama no respondió correctamente: {exc.__class__.__name__}") from exc
+        try:
+            data = json.loads(content)
+        except ValueError as exc:
+            truncated = body.get("done_reason") == "length"
+            detail = "la respuesta se cortó por longitud" if truncated else "la respuesta no es JSON válido"
+            raise LanguageModelError(f"Ollama respondió, pero {detail}.") from exc
         if not isinstance(data, dict):
             raise LanguageModelError("La respuesta del modelo no es un objeto JSON.")
         return data
